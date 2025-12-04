@@ -211,9 +211,10 @@ function App() {
     return events.filter(event => {
       // 1. IP Access Control Filter
       if (userRole === 'department_user') {
-         if (event.departmentId !== currentDepartmentId) {
-            return false;
-         }
+        // If department is specified, enforce match; otherwise allow visibility so assigned users see tasks
+        if (event.departmentId && event.departmentId !== currentDepartmentId) {
+          return false;
+        }
       }
 
       // 2. Search & UI Filters

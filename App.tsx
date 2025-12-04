@@ -16,7 +16,18 @@ import { tr } from 'date-fns/locale';
 import { Bell, ChevronLeft, ChevronRight, Plus, Users, ClipboardList, Loader2, Search, Filter, X, Network } from 'lucide-react';
 import emailjs from '@emailjs/browser';
 import { CalendarEvent, UrgencyLevel, User, AppNotification, ToastMessage, ActivityLog, Department, IpAccessConfig } from './types';
-import { INITIAL_EVENTS, DAYS_OF_WEEK, INITIAL_USERS, URGENCY_CONFIGS, TURKISH_HOLIDAYS, INITIAL_DEPARTMENTS, IP_ACCESS_CONFIG } from './constants';
+import { DAYS_OF_WEEK, URGENCY_CONFIGS, TURKISH_HOLIDAYS, IP_ACCESS_CONFIG } from './constants';
+import {
+  loadBootstrap,
+  createUser,
+  deleteUser,
+  createDepartment,
+  deleteDepartment,
+  updateIpConfig,
+  createEvent,
+  deleteEvent,
+  deleteAllEvents
+} from './api';
 import { EventBadge } from './components/EventBadge';
 import { AddEventModal } from './components/AddEventModal';
 import { AdminModal } from './components/AdminModal';
@@ -30,110 +41,28 @@ const EMAILJS_SERVICE_ID = 'service_q4mufkj';
 const EMAILJS_TEMPLATE_ID = 'template_mtdrews';
 const EMAILJS_PUBLIC_KEY = 'RBWpN3vQtjsZQGEKl';
 
-// --- LOCAL STORAGE KEYS ---
-const STORAGE_KEYS = {
-  EVENTS: 'app_events',
-  USERS: 'app_users',
-  DEPARTMENTS: 'app_departments',
-  IP_CONFIG: 'app_ip_config',
-  NOTIFICATIONS: 'app_notifications',
-  LOGS: 'app_logs'
-};
-
 function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
 
-  // --- PERSISTENT STATE INITIALIZATION ---
-  
-  // 1. Events State with LocalStorage
-  const [events, setEvents] = useState<CalendarEvent[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.EVENTS);
-      if (saved) {
-        return JSON.parse(saved, (key, value) => {
-          // Restore Date objects from strings
-          if (key === 'date') return new Date(value);
-          return value;
-        });
-      }
-    } catch (e) {
-      console.error("Failed to parse events from storage", e);
-    }
-    return INITIAL_EVENTS;
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [ipConfig, setIpConfig] = useState<IpAccessConfig>({
+    designerIp: IP_ACCESS_CONFIG.DESIGNER_IP,
+    departmentIps: { ...IP_ACCESS_CONFIG.DEPARTMENT_IPS }
   });
 
-  // 2. Users State with LocalStorage
-  const [users, setUsers] = useState<User[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.USERS);
-      return saved ? JSON.parse(saved) : INITIAL_USERS;
-    } catch (e) {
-      return INITIAL_USERS;
-    }
-  });
-
-  // 3. Departments State with LocalStorage
-  const [departments, setDepartments] = useState<Department[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.DEPARTMENTS);
-      return saved ? JSON.parse(saved) : INITIAL_DEPARTMENTS;
-    } catch (e) {
-      return INITIAL_DEPARTMENTS;
-    }
-  });
-  
-  // 4. IP / Access Control State with LocalStorage
-  const [ipConfig, setIpConfig] = useState<IpAccessConfig>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.IP_CONFIG);
-      return saved ? JSON.parse(saved) : {
-        designerIp: IP_ACCESS_CONFIG.DESIGNER_IP,
-        departmentIps: { ...IP_ACCESS_CONFIG.DEPARTMENT_IPS }
-      };
-    } catch (e) {
-      return {
-        designerIp: IP_ACCESS_CONFIG.DESIGNER_IP,
-        departmentIps: { ...IP_ACCESS_CONFIG.DEPARTMENT_IPS }
-      };
-    }
-  });
-
-  // Defaulting to Designer IP for first load (Not persisted usually, but simulating session)
-  const [currentIp, setCurrentIp] = useState<string>(ipConfig.designerIp);
+  const [currentIp, setCurrentIp] = useState<string>(IP_ACCESS_CONFIG.DESIGNER_IP);
   const [isIpSimOpen, setIsIpSimOpen] = useState(false);
 
-  // 5. Notification System State with LocalStorage
-  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
-      if (saved) {
-        return JSON.parse(saved, (key, value) => {
-          if (key === 'date') return new Date(value);
-          return value;
-        });
-      }
-    } catch (e) {}
-    return [];
-  });
-
-  // 6. Logs State with LocalStorage
-  const [logs, setLogs] = useState<ActivityLog[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.LOGS);
-      if (saved) {
-        return JSON.parse(saved, (key, value) => {
-          if (key === 'timestamp') return new Date(value);
-          return value;
-        });
-      }
-    } catch (e) {}
-    return [];
-  });
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [logs, setLogs] = useState<ActivityLog[]>([]);
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isLogOpen, setIsLogOpen] = useState(false);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
   
   // Search & Filter State
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -146,34 +75,6 @@ function App() {
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [selectedDateForAdd, setSelectedDateForAdd] = useState<Date>(new Date());
   const [viewEvent, setViewEvent] = useState<CalendarEvent | null>(null);
-
-  // --- PERSISTENCE EFFECT HOOKS ---
-  // Whenever these states change, save them to localStorage
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.EVENTS, JSON.stringify(events));
-  }, [events]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
-  }, [users]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.DEPARTMENTS, JSON.stringify(departments));
-  }, [departments]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.IP_CONFIG, JSON.stringify(ipConfig));
-  }, [ipConfig]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(notifications));
-  }, [notifications]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(logs));
-  }, [logs]);
-
 
   // --- Derived Permissions based on IP ---
   const userRole = useMemo(() => {
@@ -214,10 +115,10 @@ function App() {
     return events.filter(event => {
       // 1. IP Access Control Filter
       if (userRole === 'department_user') {
-         // Only show events that belong to the user's department
-         if (event.departmentId !== currentDepartmentId) {
-            return false;
-         }
+        // If department is specified, enforce match; otherwise allow visibility so assigned users see tasks
+        if (event.departmentId && event.departmentId !== currentDepartmentId) {
+          return false;
+        }
       }
 
       // 2. Search & UI Filters
@@ -268,159 +169,201 @@ function App() {
     setToasts((prev) => prev.filter(t => t.id !== id));
   };
 
-  // --- User Management ---
-  const handleAddUser = (name: string, email: string, emoji: string) => {
-    const newUser: User = {
-      id: Math.random().toString(36).substr(2, 9),
-      name,
-      email,
-      emoji: emoji
+  // --- Backend Bootstrap ---
+  useEffect(() => {
+    const hydrate = async () => {
+      try {
+        const data = await loadBootstrap();
+        setEvents(data.events);
+        setUsers(data.users);
+        setDepartments(data.departments);
+        setIpConfig(data.ipConfig);
+        setNotifications(data.notifications);
+        setLogs(data.logs);
+        setCurrentIp(data.ipConfig.designerIp);
+      } catch (error) {
+        console.error('Bootstrap error', error);
+        addToast('Sunucuya bağlanılamadı. Lütfen API sunucusunu başlatın.', 'info');
+      } finally {
+        setIsBootstrapping(false);
+      }
     };
-    setUsers([...users, newUser]);
-    addToast(`${name} başarıyla eklendi.`, 'success');
+
+    hydrate();
+  }, []);
+
+  // --- User Management ---
+  const handleAddUser = async (name: string, email: string, emoji: string) => {
+    try {
+      const created = await createUser(name, email, emoji);
+      setUsers(prev => [...prev, created]);
+      addToast(`${name} başarıyla eklendi.`, 'success');
+    } catch (error) {
+      console.error(error);
+      addToast('Hata oluştu.', 'info');
+    }
   };
 
-  const handleDeleteUser = (id: string) => {
-    setUsers(users.filter(u => u.id !== id));
+  const handleDeleteUser = async (id: string) => {
+    try {
+      await deleteUser(id);
+      setUsers(prev => prev.filter(u => u.id !== id));
+      setEvents(prev => prev.map(ev => ev.assigneeId === id ? { ...ev, assigneeId: undefined } : ev));
+    } catch (error) {
+      console.error(error);
+      addToast('Silme hatası.', 'info');
+    }
   };
 
   // --- Department Management ---
-  const handleAddDepartment = (name: string) => {
-    const newDept: Department = {
-      id: Math.random().toString(36).substr(2, 9),
-      name
-    };
-    setDepartments([...departments, newDept]);
-    addToast(`${name} birimi eklendi.`, 'success');
+  const handleAddDepartment = async (name: string) => {
+    try {
+      const created = await createDepartment(name);
+      setDepartments(prev => [...prev, created]);
+      addToast(`${name} birimi eklendi.`, 'success');
+    } catch (error) {
+      console.error(error);
+      addToast('Hata oluştu.', 'info');
+    }
   };
 
-  const handleDeleteDepartment = (id: string) => {
-    setDepartments(departments.filter(d => d.id !== id));
-    addToast('Birim silindi.', 'info');
+  const handleDeleteDepartment = async (id: string) => {
+    try {
+      await deleteDepartment(id);
+      setDepartments(prev => prev.filter(d => d.id !== id));
+      setEvents(prev => prev.map(ev => ev.departmentId === id ? { ...ev, departmentId: undefined } : ev));
+      addToast('Birim silindi.', 'info');
+    } catch (error) {
+      console.error(error);
+      addToast('Silme hatası.', 'info');
+    }
   };
 
   // --- IP Config Management ---
-  const handleUpdateIpConfig = (newConfig: IpAccessConfig) => {
-    setIpConfig(newConfig);
-    addToast('Erişim ayarları güncellendi.', 'success');
+  const handleUpdateIpConfig = async (newConfig: IpAccessConfig) => {
+    try {
+      const saved = await updateIpConfig(newConfig);
+      setIpConfig(saved);
+      setCurrentIp(saved.designerIp);
+      addToast('Erişim ayarları güncellendi.', 'success');
+    } catch (error) {
+      console.error(error);
+      addToast('Ayarlar kaydedilemedi.', 'info');
+    }
   };
 
   // --- Event Handling ---
   const handleAddEvent = async (
-      title: string, 
-      urgency: UrgencyLevel, 
-      date: Date, 
-      assigneeId?: string, 
-      description?: string, 
+      title: string,
+      urgency: UrgencyLevel,
+      date: Date,
+      assigneeId?: string,
+      description?: string,
       departmentId?: string
     ) => {
-    // Generate a proper ID first to use in emails
-    const eventId = Math.random().toString(36).substr(2, 9).toUpperCase();
-    
-    const newEvent: CalendarEvent = {
-      id: eventId,
-      title,
-      date,
-      urgency,
-      assigneeId,
-      description,
-      departmentId
-    };
-    setEvents([...events, newEvent]);
+    try {
+      const { event: createdEvent, notification, log } = await createEvent({
+        title,
+        date,
+        urgency,
+        assigneeId,
+        description,
+        departmentId
+      });
 
-    if (assigneeId) {
-      const assignedUser = users.find(u => u.id === assigneeId);
-      if (assignedUser) {
-        
-        const newNotif: AppNotification = {
-          id: Math.random().toString(36).substr(2, 9),
-          title: 'Görev Ataması Yapıldı',
-          message: `${assignedUser.name} kişisine "${title}" görevi atandı.`,
-          date: new Date(),
-          isRead: false,
-          type: 'email'
-        };
-        setNotifications((prev) => [newNotif, ...prev]);
+      setEvents(prev => [...prev, createdEvent]);
+      if (notification) setNotifications(prev => [notification, ...prev]);
+      if (log) setLogs(prev => [log, ...prev]);
 
-        const newLog: ActivityLog = {
-           id: Math.random().toString(36).substr(2, 9),
-           message: `${title} kampanyası için ${assignedUser.name} kişiye görev ataması yapıldı (ID: ${eventId})`,
-           timestamp: new Date()
-        };
-        setLogs((prev) => [newLog, ...prev]);
+      const eventId = createdEvent.id.toUpperCase();
 
-        setIsSendingEmail(true);
-        
-        let emailMessage = `${format(date, 'd MMMM yyyy', { locale: tr })} tarihindeki "${title}" kampanyası için görevlendirildiniz.\nAciliyet: ${URGENCY_CONFIGS[urgency].label}`;
-        
-        if (description) {
-          emailMessage += `\n\nAçıklama:\n${description}`;
+      if (assigneeId) {
+        const assignedUser = users.find(u => u.id === assigneeId);
+        if (assignedUser) {
+          setIsSendingEmail(true);
+
+          let emailMessage = `${format(date, 'd MMMM yyyy', { locale: tr })} tarihindeki "${title}" kampanyası için görevlendirildiniz.\nAciliyet: ${URGENCY_CONFIGS[urgency].label}`;
+
+          if (description) {
+            emailMessage += `\n\nAçıklama:\n${description}`;
+          }
+
+          if (departmentId) {
+              const dept = departments.find(d => d.id === departmentId);
+              if (dept) {
+                  emailMessage += `\n\nTalep Eden Birim: ${dept.name}`;
+              }
+          }
+
+          const footerIdText = `Ref ID: #${eventId}`;
+
+          const templateParams = {
+              to_email: assignedUser.email,
+              to_name: assignedUser.name,
+              name: assignedUser.name,
+              email: assignedUser.email,
+              title: title,
+              message: emailMessage,
+              ref_id: `#${eventId}`,
+          };
+
+          console.log('📨 E-posta gönderimi başlatılıyor. Parametreler:', templateParams);
+
+          try {
+              const response = await emailjs.send(
+                  EMAILJS_SERVICE_ID,
+                  EMAILJS_TEMPLATE_ID,
+                  templateParams,
+                  EMAILJS_PUBLIC_KEY
+              );
+              console.log('✅ E-posta Başarılı:', response);
+              addToast(`✅ E-posta gönderildi!`, 'success');
+          } catch (error: any) {
+              console.error('❌ E-posta Hatası (API):', error);
+              addToast('⚠️ Güvenlik duvarı tespit edildi. Mail istemcisi açılıyor...', 'info');
+
+              setTimeout(() => {
+                  const subject = encodeURIComponent(`ACİL: Görev Ataması: ${title} [#${eventId}]`);
+                  const body = encodeURIComponent(
+                      `Sayın ${assignedUser.name},\n\n${emailMessage}\n\nİyi çalışmalar.\n\n----------------\n${footerIdText}`
+                  );
+                  window.location.href = `mailto:${assignedUser.email}?subject=${subject}&body=${body}&importance=High&X-Priority=1`;
+              }, 1000);
+
+          } finally {
+              setIsSendingEmail(false);
+          }
+
         }
-        
-        // Find department name if exists
-        if (departmentId) {
-            const dept = departments.find(d => d.id === departmentId);
-            if (dept) {
-                emailMessage += `\n\nTalep Eden Birim: ${dept.name}`;
-            }
-        }
-
-        // Footer message for mailto fallback (Plain text)
-        const footerIdText = `Ref ID: #${eventId}`; 
-
-        const templateParams = {
-            to_email: assignedUser.email, 
-            to_name: assignedUser.name, 
-            name: assignedUser.name,      
-            email: assignedUser.email,    
-            title: title,
-            message: emailMessage,
-            ref_id: `#${eventId}`, // Param for EmailJS template (Footer 7pt)
-        };
-        
-        console.log('📨 E-posta gönderimi başlatılıyor. Parametreler:', templateParams);
-
-        try {
-            const response = await emailjs.send(
-                EMAILJS_SERVICE_ID,
-                EMAILJS_TEMPLATE_ID,
-                templateParams,
-                EMAILJS_PUBLIC_KEY
-            );
-            console.log('✅ E-posta Başarılı:', response);
-            addToast(`✅ E-posta gönderildi!`, 'success');
-        } catch (error: any) {
-            console.error('❌ E-posta Hatası (API):', error);
-            addToast('⚠️ Güvenlik duvarı tespit edildi. Mail istemcisi açılıyor...', 'info');
-            
-            setTimeout(() => {
-                const subject = encodeURIComponent(`ACİL: Görev Ataması: ${title} [#${eventId}]`);
-                // Mailto doesn't support HTML styles like 7pt font, so we separate it visually
-                const body = encodeURIComponent(
-                    `Sayın ${assignedUser.name},\n\n${emailMessage}\n\nİyi çalışmalar.\n\n----------------\n${footerIdText}`
-                );
-                // Added importance=High and X-Priority=1 for High Priority email
-                window.location.href = `mailto:${assignedUser.email}?subject=${subject}&body=${body}&importance=High&X-Priority=1`;
-            }, 1000);
-
-        } finally {
-            setIsSendingEmail(false);
-        }
-
+      } else {
+          addToast('Kampanya oluşturuldu (Atama yok).', 'success');
       }
-    } else {
-        addToast('Kampanya oluşturuldu (Atama yok).', 'success');
+    } catch (error) {
+      console.error(error);
+      addToast('Hata: Kampanya kaydedilemedi.', 'info');
     }
   };
 
-  const handleDeleteEvent = (id: string) => {
-    setEvents(events.filter(e => e.id !== id));
-    addToast('Kampanya silindi.', 'info');
+  const handleDeleteEvent = async (id: string) => {
+    try {
+      await deleteEvent(id);
+      setEvents(prev => prev.filter(e => e.id !== id));
+      addToast('Kampanya silindi.', 'info');
+    } catch (error) {
+      console.error(error);
+      addToast('Silme hatası.', 'info');
+    }
   };
 
-  const handleDeleteAllEvents = () => {
-    setEvents([]);
-    addToast('Tüm kampanyalar silindi.', 'info');
+  const handleDeleteAllEvents = async () => {
+    try {
+      await deleteAllEvents();
+      setEvents([]);
+      addToast('Tüm kampanyalar silindi.', 'info');
+    } catch (error) {
+      console.error(error);
+      addToast('Toplu silme hatası.', 'info');
+    }
   };
 
   const openAddModal = (date?: Date) => {
@@ -443,6 +386,14 @@ function App() {
   };
 
   const hasActiveFilters = searchQuery || filterAssignee || filterUrgency;
+
+  if (isBootstrapping) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-gray-700">
+        Veriler yükleniyor...
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen p-4 md:p-8 text-gray-800">
