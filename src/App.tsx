@@ -15,8 +15,8 @@ import {
 import { tr } from 'date-fns/locale';
 import { Bell, ChevronLeft, ChevronRight, Plus, Users, ClipboardList, Loader2, Search, Filter, X, Network } from 'lucide-react';
 import emailjs from '@emailjs/browser';
-import { CalendarEvent, UrgencyLevel, User, AppNotification, ToastMessage, ActivityLog, Department, IpAccessConfig } from './types';
-import { DAYS_OF_WEEK, URGENCY_CONFIGS, TURKISH_HOLIDAYS, IP_ACCESS_CONFIG } from './constants';
+import { CalendarEvent, UrgencyLevel, User, AppNotification, ToastMessage, ActivityLog, Department, IpAccessConfig } from '../types';
+import { DAYS_OF_WEEK, URGENCY_CONFIGS, TURKISH_HOLIDAYS, IP_ACCESS_CONFIG } from '../constants';
 import {
   loadBootstrap,
   createUser,
@@ -27,14 +27,14 @@ import {
   createEvent,
   deleteEvent,
   deleteAllEvents
-} from './api';
-import { EventBadge } from './components/EventBadge';
-import { AddEventModal } from './components/AddEventModal';
-import { AdminModal } from './components/AdminModal';
-import { NotificationPopover } from './components/NotificationPopover';
-import { LogPopover } from './components/LogPopover';
-import { ToastContainer } from './components/Toast';
-import { EventDetailsModal } from './components/EventDetailsModal';
+} from '../api';
+import { EventBadge } from '../components/EventBadge';
+import { AddEventModal } from '../components/AddEventModal';
+import { AdminModal } from '../components/AdminModal';
+import { NotificationPopover } from '../components/NotificationPopover';
+import { LogPopover } from '../components/LogPopover';
+import { ToastContainer } from '../components/Toast';
+import { EventDetailsModal } from '../components/EventDetailsModal';
 
 // --- EMAILJS CONFIGURATION ---
 const EMAILJS_SERVICE_ID = 'service_q4mufkj';
