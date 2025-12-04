@@ -1,18 +1,18 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import {
-  format,
-  addMonths,
-  endOfMonth,
-  endOfWeek,
-  eachDayOfInterval,
-  isSameMonth,
-  isSameDay,
+import { 
+  format, 
+  addMonths, 
+  endOfMonth, 
+  endOfWeek, 
+  eachDayOfInterval, 
+  isSameMonth, 
+  isSameDay, 
   isToday,
-  isWeekend,
-  startOfMonth,
-  startOfWeek,
+  isWeekend
 } from 'date-fns';
-import { tr } from 'date-fns/locale';
+import startOfMonth from 'date-fns/startOfMonth';
+import startOfWeek from 'date-fns/startOfWeek';
+import tr from 'date-fns/locale/tr';
 import { Bell, ChevronLeft, ChevronRight, Plus, Users, ClipboardList, Loader2, Search, Filter, X, Network } from 'lucide-react';
 import emailjs from '@emailjs/browser';
 import { CalendarEvent, UrgencyLevel, User, AppNotification, ToastMessage, ActivityLog, Department, IpAccessConfig } from './types';
