@@ -13,10 +13,21 @@ import {
   startOfWeek,
 } from 'date-fns';
 import { tr } from 'date-fns/locale';
-import { Bell, ChevronLeft, ChevronRight, Plus, Users, ClipboardList, Loader2, Search, Filter, X, Network, Database } from 'lucide-react';
+import { Bell, ChevronLeft, ChevronRight, Plus, Users, ClipboardList, Loader2, Search, Filter, X, Network } from 'lucide-react';
 import emailjs from '@emailjs/browser';
 import { CalendarEvent, UrgencyLevel, User, AppNotification, ToastMessage, ActivityLog, Department, IpAccessConfig } from '../types';
-import { INITIAL_EVENTS, DAYS_OF_WEEK, INITIAL_USERS, URGENCY_CONFIGS, TURKISH_HOLIDAYS, INITIAL_DEPARTMENTS, IP_ACCESS_CONFIG } from '../constants';
+import { DAYS_OF_WEEK, URGENCY_CONFIGS, TURKISH_HOLIDAYS, IP_ACCESS_CONFIG } from '../constants';
+import {
+  loadBootstrap,
+  createUser,
+  deleteUser,
+  createDepartment,
+  deleteDepartment,
+  updateIpConfig,
+  createEvent,
+  deleteEvent,
+  deleteAllEvents
+} from '../api';
 import { EventBadge } from '../components/EventBadge';
 import { AddEventModal } from '../components/AddEventModal';
 import { AdminModal } from '../components/AdminModal';
@@ -24,21 +35,6 @@ import { NotificationPopover } from '../components/NotificationPopover';
 import { LogPopover } from '../components/LogPopover';
 import { ToastContainer } from '../components/Toast';
 import { EventDetailsModal } from '../components/EventDetailsModal';
-
-// --- FIREBASE IMPORTS ---
-import { db } from './firebase';
-import { 
-  collection, 
-  addDoc, 
-  deleteDoc, 
-  doc, 
-  onSnapshot, 
-  query, 
-  orderBy, 
-  Timestamp, 
-  setDoc,
-  updateDoc
-} from 'firebase/firestore';
 
 // --- EMAILJS CONFIGURATION ---
 const EMAILJS_SERVICE_ID = 'service_q4mufkj';
@@ -48,28 +44,26 @@ const EMAILJS_PUBLIC_KEY = 'RBWpN3vQtjsZQGEKl';
 function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
 
-  // --- STATE MANAGEMENT (Now synced with Firebase) ---
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
-  
-  // IP Config is stored as a single document in 'settings' collection
   const [ipConfig, setIpConfig] = useState<IpAccessConfig>({
     designerIp: IP_ACCESS_CONFIG.DESIGNER_IP,
     departmentIps: { ...IP_ACCESS_CONFIG.DEPARTMENT_IPS }
   });
 
-  // Logs and Notifications are also synced
+  const [currentIp, setCurrentIp] = useState<string>(IP_ACCESS_CONFIG.DESIGNER_IP);
+  const [isIpSimOpen, setIsIpSimOpen] = useState(false);
+
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
 
-  // Local UI State
-  const [currentIp, setCurrentIp] = useState<string>(''); // Will set after ipConfig loads
-  const [isIpSimOpen, setIsIpSimOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isLogOpen, setIsLogOpen] = useState(false);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   
   // Search & Filter State
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -82,95 +76,6 @@ function App() {
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [selectedDateForAdd, setSelectedDateForAdd] = useState<Date>(new Date());
   const [viewEvent, setViewEvent] = useState<CalendarEvent | null>(null);
-
-  // --- FIREBASE LISTENERS (REAL-TIME SYNC) ---
-
-  // 1. Sync Events
-  useEffect(() => {
-    const q = query(collection(db, "events"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedEvents: CalendarEvent[] = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          title: data.title,
-          urgency: data.urgency,
-          assigneeId: data.assigneeId,
-          description: data.description,
-          departmentId: data.departmentId,
-          // Convert Firestore Timestamp to Date
-          date: data.date instanceof Timestamp ? data.date.toDate() : new Date(data.date)
-        } as CalendarEvent;
-      });
-      setEvents(fetchedEvents);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // 2. Sync Users
-  useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, "users"), (snapshot) => {
-      const fetchedUsers: User[] = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as User));
-      setUsers(fetchedUsers);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // 3. Sync Departments
-  useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, "departments"), (snapshot) => {
-      const fetchedDepts: Department[] = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Department));
-      setDepartments(fetchedDepts);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // 4. Sync Settings (IP Config)
-  useEffect(() => {
-    const unsubscribe = onSnapshot(doc(db, "settings", "ipConfig"), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data() as IpAccessConfig;
-        setIpConfig(data);
-        // Set initial IP simulation if not set
-        if (!currentIp) setCurrentIp(data.designerIp);
-      } else {
-        // If document doesn't exist (first run), create it with defaults
-        setDoc(doc(db, "settings", "ipConfig"), {
-           designerIp: IP_ACCESS_CONFIG.DESIGNER_IP,
-           departmentIps: IP_ACCESS_CONFIG.DEPARTMENT_IPS
-        });
-      }
-    });
-    return () => unsubscribe();
-  }, [currentIp]);
-
-  // 5. Sync Notifications
-  useEffect(() => {
-    const q = query(collection(db, "notifications"), orderBy("date", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedNotifs: AppNotification[] = snapshot.docs.map(doc => ({
-        ...doc.data(),
-        id: doc.id,
-        date: doc.data().date instanceof Timestamp ? doc.data().date.toDate() : new Date()
-      } as AppNotification));
-      setNotifications(fetchedNotifs);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // 6. Sync Logs
-  useEffect(() => {
-    const q = query(collection(db, "logs"), orderBy("timestamp", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedLogs: ActivityLog[] = snapshot.docs.map(doc => ({
-        ...doc.data(),
-        id: doc.id,
-        timestamp: doc.data().timestamp instanceof Timestamp ? doc.data().timestamp.toDate() : new Date()
-      } as ActivityLog));
-      setLogs(fetchedLogs);
-    });
-    return () => unsubscribe();
-  }, []);
 
   // --- Derived Permissions based on IP ---
   const userRole = useMemo(() => {
@@ -211,13 +116,15 @@ function App() {
     return events.filter(event => {
       // 1. IP Access Control Filter
       if (userRole === 'department_user') {
-         if (event.departmentId !== currentDepartmentId) {
-            return false;
-         }
+        // If department is specified, enforce match; otherwise allow visibility so assigned users see tasks
+        if (event.departmentId && event.departmentId !== currentDepartmentId) {
+          return false;
+        }
       }
 
       // 2. Search & UI Filters
       const query = searchQuery.toLowerCase();
+      // Search in Title OR Event ID
       const matchesSearch = 
         event.title.toLowerCase().includes(query) || 
         event.id.toLowerCase().includes(query);
@@ -263,211 +170,217 @@ function App() {
     setToasts((prev) => prev.filter(t => t.id !== id));
   };
 
-  // --- FIREBASE ACTIONS ---
+  // --- Backend Bootstrap ---
+  const hydrate = async () => {
+    setIsBootstrapping(true);
+    setBootstrapError(null);
 
-  const seedDatabase = async () => {
     try {
-        // Seed Users
-        if (users.length === 0) {
-            for (const user of INITIAL_USERS) {
-                await setDoc(doc(db, "users", user.id), user);
-            }
-        }
-        // Seed Departments
-        if (departments.length === 0) {
-            for (const dept of INITIAL_DEPARTMENTS) {
-                await setDoc(doc(db, "departments", dept.id), dept);
-            }
-        }
-        // Seed Events
-        if (events.length === 0) {
-            for (const event of INITIAL_EVENTS) {
-                // Remove ID from object as it will be doc ID
-                const { id, ...eventData } = event;
-                await setDoc(doc(db, "events", id), {
-                    ...eventData,
-                    date: Timestamp.fromDate(event.date)
-                });
-            }
-        }
-        addToast('Veritabanı varsayılan verilerle dolduruldu.', 'success');
+      const data = await loadBootstrap();
+      setEvents(data.events);
+      setUsers(data.users);
+      setDepartments(data.departments);
+      setIpConfig(data.ipConfig);
+      setNotifications(data.notifications);
+      setLogs(data.logs);
+      setCurrentIp(data.ipConfig.designerIp);
     } catch (error) {
-        console.error("Seeding error:", error);
-        addToast('Veri yükleme hatası!', 'info');
+      console.error('Bootstrap error', error);
+      setBootstrapError('Sunucuya bağlanılamadı. API sunucusunun çalıştığından emin olun.');
+      addToast('Sunucuya bağlanılamadı. Lütfen API sunucusunu başlatın.', 'info');
+    } finally {
+      setIsBootstrapping(false);
     }
   };
 
+  useEffect(() => {
+    hydrate();
+  }, []);
+
+  // --- User Management ---
   const handleAddUser = async (name: string, email: string, emoji: string) => {
     try {
-        await addDoc(collection(db, "users"), {
-            name,
-            email,
-            emoji
-        });
-        addToast(`${name} başarıyla eklendi.`, 'success');
-    } catch (e) {
-        addToast('Hata oluştu.', 'info');
+      const created = await createUser(name, email, emoji);
+      setUsers(prev => [...prev, created]);
+      addToast(`${name} başarıyla eklendi.`, 'success');
+    } catch (error) {
+      console.error(error);
+      addToast('Hata oluştu.', 'info');
     }
   };
 
   const handleDeleteUser = async (id: string) => {
     try {
-        await deleteDoc(doc(db, "users", id));
-        addToast('Personel silindi.', 'info');
-    } catch (e) {
-        addToast('Silme hatası.', 'info');
+      await deleteUser(id);
+      setUsers(prev => prev.filter(u => u.id !== id));
+      setEvents(prev => prev.map(ev => ev.assigneeId === id ? { ...ev, assigneeId: undefined } : ev));
+    } catch (error) {
+      console.error(error);
+      addToast('Silme hatası.', 'info');
     }
   };
 
+  // --- Department Management ---
   const handleAddDepartment = async (name: string) => {
     try {
-        await addDoc(collection(db, "departments"), { name });
-        addToast(`${name} birimi eklendi.`, 'success');
-    } catch (e) {
-        addToast('Hata oluştu.', 'info');
+      const created = await createDepartment(name);
+      setDepartments(prev => [...prev, created]);
+      addToast(`${name} birimi eklendi.`, 'success');
+    } catch (error) {
+      console.error(error);
+      addToast('Hata oluştu.', 'info');
     }
   };
 
   const handleDeleteDepartment = async (id: string) => {
     try {
-        await deleteDoc(doc(db, "departments", id));
-        addToast('Birim silindi.', 'info');
-    } catch (e) {
-        addToast('Silme hatası.', 'info');
+      await deleteDepartment(id);
+      setDepartments(prev => prev.filter(d => d.id !== id));
+      setEvents(prev => prev.map(ev => ev.departmentId === id ? { ...ev, departmentId: undefined } : ev));
+      addToast('Birim silindi.', 'info');
+    } catch (error) {
+      console.error(error);
+      addToast('Silme hatası.', 'info');
     }
   };
 
+  // --- IP Config Management ---
   const handleUpdateIpConfig = async (newConfig: IpAccessConfig) => {
     try {
-        await setDoc(doc(db, "settings", "ipConfig"), newConfig);
-        addToast('Erişim ayarları güncellendi.', 'success');
-    } catch (e) {
-        addToast('Ayarlar kaydedilemedi.', 'info');
+      const saved = await updateIpConfig(newConfig);
+      setIpConfig(saved);
+      setCurrentIp(saved.designerIp);
+      addToast('Erişim ayarları güncellendi.', 'success');
+    } catch (error) {
+      console.error(error);
+      addToast('Ayarlar kaydedilemedi.', 'info');
     }
   };
 
+  // --- Event Handling ---
   const handleAddEvent = async (
-      title: string, 
-      urgency: UrgencyLevel, 
-      date: Date, 
-      assigneeId?: string, 
-      description?: string, 
+      title: string,
+      urgency: UrgencyLevel,
+      date: Date,
+      assigneeId?: string,
+      description?: string,
       departmentId?: string
     ) => {
-    
-    // Generate an ID for reference (optional, Firestore generates its own too, but we use this for display)
-    // We will let Firestore generate the Document ID, but we can store a friendly Ref ID if needed.
-    // For simplicity, let's use the Document ID as the Event ID after creation.
-
-    const eventData = {
-      title,
-      date: Timestamp.fromDate(date),
-      urgency,
-      assigneeId,
-      description,
-      departmentId
-    };
-
-    let newEventId = "";
-
     try {
-        const docRef = await addDoc(collection(db, "events"), eventData);
-        newEventId = docRef.id;
-        addToast('Kampanya oluşturuldu.', 'success');
-    } catch (e) {
-        console.error(e);
-        addToast('Hata: Kampanya kaydedilemedi.', 'info');
-        return;
-    }
+      const { event: createdEvent, notification, log } = await createEvent({
+        title,
+        date,
+        urgency,
+        assigneeId,
+        description,
+        departmentId
+      });
 
-    if (assigneeId) {
-      const assignedUser = users.find(u => u.id === assigneeId);
-      if (assignedUser) {
-        
-        // Add Notification
-        await addDoc(collection(db, "notifications"), {
-          title: 'Görev Ataması Yapıldı',
-          message: `${assignedUser.name} kişisine "${title}" görevi atandı.`,
-          date: Timestamp.now(),
-          isRead: false,
-          type: 'email'
-        });
+      setEvents(prev => [...prev, createdEvent]);
+      if (notification) setNotifications(prev => [notification, ...prev]);
+      if (log) setLogs(prev => [log, ...prev]);
 
-        // Add Log
-        await addDoc(collection(db, "logs"), {
-           message: `${title} kampanyası için ${assignedUser.name} kişiye görev ataması yapıldı (ID: ${newEventId})`,
-           timestamp: Timestamp.now()
-        });
+      const eventId = createdEvent.id.toUpperCase();
 
-        // Send Email (Client Side)
-        setIsSendingEmail(true);
-        
-        let emailMessage = `${format(date, 'd MMMM yyyy', { locale: tr })} tarihindeki "${title}" kampanyası için görevlendirildiniz.\nAciliyet: ${URGENCY_CONFIGS[urgency].label}`;
-        if (description) emailMessage += `\n\nAçıklama:\n${description}`;
-        
-        if (departmentId) {
-            const dept = departments.find(d => d.id === departmentId);
-            if (dept) emailMessage += `\n\nTalep Eden Birim: ${dept.name}`;
+      if (assigneeId) {
+        const assignedUser = users.find(u => u.id === assigneeId);
+        if (assignedUser) {
+          setIsSendingEmail(true);
+
+          let emailMessage = `${format(date, 'd MMMM yyyy', { locale: tr })} tarihindeki "${title}" kampanyası için görevlendirildiniz.\nAciliyet: ${URGENCY_CONFIGS[urgency].label}`;
+
+          if (description) {
+            emailMessage += `\n\nAçıklama:\n${description}`;
+          }
+
+          if (departmentId) {
+              const dept = departments.find(d => d.id === departmentId);
+              if (dept) {
+                  emailMessage += `\n\nTalep Eden Birim: ${dept.name}`;
+              }
+          }
+
+          const footerIdText = `Ref ID: #${eventId}`;
+
+          const templateParams = {
+              to_email: assignedUser.email,
+              to_name: assignedUser.name,
+              name: assignedUser.name,
+              email: assignedUser.email,
+              title: title,
+              message: emailMessage,
+              ref_id: `#${eventId}`,
+          };
+
+          console.log('📨 E-posta gönderimi başlatılıyor. Parametreler:', templateParams);
+
+          try {
+              const response = await emailjs.send(
+                  EMAILJS_SERVICE_ID,
+                  EMAILJS_TEMPLATE_ID,
+                  templateParams,
+                  EMAILJS_PUBLIC_KEY
+              );
+              console.log('✅ E-posta Başarılı:', response);
+              addToast(`✅ E-posta gönderildi!`, 'success');
+          } catch (error: any) {
+              console.error('❌ E-posta Hatası (API):', error);
+              addToast('⚠️ Güvenlik duvarı tespit edildi. Mail istemcisi açılıyor...', 'info');
+
+              setTimeout(() => {
+                  const subject = encodeURIComponent(`ACİL: Görev Ataması: ${title} [#${eventId}]`);
+                  const body = encodeURIComponent(
+                      `Sayın ${assignedUser.name},\n\n${emailMessage}\n\nİyi çalışmalar.\n\n----------------\n${footerIdText}`
+                  );
+                  window.location.href = `mailto:${assignedUser.email}?subject=${subject}&body=${body}&importance=High&X-Priority=1`;
+              }, 1000);
+
+          } finally {
+              setIsSendingEmail(false);
+          }
+
         }
-
-        const footerIdText = `Ref ID: #${newEventId.substring(0,6).toUpperCase()}`; 
-        const templateParams = {
-            to_email: assignedUser.email, 
-            to_name: assignedUser.name, 
-            name: assignedUser.name,      
-            email: assignedUser.email,    
-            title: title,
-            message: emailMessage,
-            ref_id: footerIdText,
-        };
-        
-        try {
-            await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams, EMAILJS_PUBLIC_KEY);
-            addToast(`✅ E-posta gönderildi!`, 'success');
-        } catch (error: any) {
-            console.error('❌ E-posta Hatası:', error);
-            addToast('Mail istemcisi açılıyor...', 'info');
-            setTimeout(() => {
-                const subject = encodeURIComponent(`ACİL: Görev Ataması: ${title}`);
-                const body = encodeURIComponent(`Sayın ${assignedUser.name},\n\n${emailMessage}\n\n----------------\n${footerIdText}`);
-                window.location.href = `mailto:${assignedUser.email}?subject=${subject}&body=${body}&importance=High`;
-            }, 1000);
-        } finally {
-            setIsSendingEmail(false);
-        }
+      } else {
+          addToast('Kampanya oluşturuldu (Atama yok).', 'success');
       }
+    } catch (error) {
+      console.error(error);
+      addToast('Hata: Kampanya kaydedilemedi.', 'info');
     }
   };
 
   const handleDeleteEvent = async (id: string) => {
     try {
-        await deleteDoc(doc(db, "events", id));
-        addToast('Kampanya silindi.', 'info');
-    } catch (e) {
-        addToast('Silme hatası.', 'info');
+      await deleteEvent(id);
+      setEvents(prev => prev.filter(e => e.id !== id));
+      addToast('Kampanya silindi.', 'info');
+    } catch (error) {
+      console.error(error);
+      addToast('Silme hatası.', 'info');
     }
   };
 
   const handleDeleteAllEvents = async () => {
     try {
-        // Firestore doesn't support "delete collection", so we batch delete or loop
-        // For this size app, looping is fine.
-        events.forEach(async (ev) => {
-            await deleteDoc(doc(db, "events", ev.id));
-        });
-        addToast('Tüm kampanyalar siliniyor...', 'info');
-    } catch (e) {
-        addToast('Toplu silme hatası.', 'info');
+      await deleteAllEvents();
+      setEvents([]);
+      addToast('Tüm kampanyalar silindi.', 'info');
+    } catch (error) {
+      console.error(error);
+      addToast('Toplu silme hatası.', 'info');
     }
   };
 
   const openAddModal = (date?: Date) => {
+    // Only Designers can add events
     if (!isDesigner) return;
+    
     setSelectedDateForAdd(date || new Date());
     setIsModalOpen(true);
   };
 
   const getEventsForDay = (date: Date) => {
+    // Use filteredEvents here instead of raw events
     return filteredEvents.filter(event => isSameDay(event.date, date));
   };
 
@@ -479,27 +392,69 @@ function App() {
 
   const hasActiveFilters = searchQuery || filterAssignee || filterUrgency;
 
+  if (isBootstrapping) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-gray-700">
+        Veriler yükleniyor...
+      </div>
+    );
+  }
+
+  if (bootstrapError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+        <div className="bg-white shadow-xl rounded-2xl p-6 max-w-lg w-full border border-gray-100 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="bg-red-100 text-red-700 w-10 h-10 rounded-full flex items-center justify-center font-bold">!</div>
+            <div>
+              <h1 className="text-lg font-bold text-gray-800">API sunucusuna ulaşılamıyor</h1>
+              <p className="text-sm text-gray-600">{bootstrapError}</p>
+            </div>
+          </div>
+          <div className="bg-gray-50 border border-dashed border-gray-200 rounded-lg p-4 text-sm text-gray-700">
+            <p className="font-semibold text-gray-800 mb-2">Çözüm</p>
+            <ol className="list-decimal list-inside space-y-2">
+              <li>
+                Terminalde <code className="bg-white px-2 py-1 rounded border">npm run dev</code> komutuyla
+                frontend ve API'yi birlikte başlatın. Sadece API'yi açmanız gerekiyorsa
+                <code className="bg-white px-2 py-1 rounded border ml-1">npm run server</code> komutunu kullanabilirsiniz.
+              </li>
+              <li>Sunucu açıldıktan sonra aşağıdaki <strong>Tekrar Dene</strong> butonuna tıklayın.</li>
+              <li>Gerekirse sayfayı yenileyerek bağlantıyı doğrulayın.</li>
+            </ol>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={hydrate}
+              className="flex-1 bg-violet-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-violet-700 transition-colors"
+            >
+              Tekrar Dene
+            </button>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
+            >
+              Sayfayı Yenile
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen p-4 md:p-8 text-gray-800">
       <div className="max-w-[1400px] mx-auto flex flex-col h-[calc(100vh-4rem)]">
         
         {/* Header Section */}
         <div className="mb-6 flex flex-col gap-4">
+            {/* Top Bar */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex flex-col">
                     <h1 className="text-xl font-bold text-gray-800 uppercase tracking-wide flex items-center gap-2">
                         {isDesigner ? 'Kampanya Takvimi' : `Takvim: ${currentDepartmentName || 'Birim Görünümü'}`}
                         {!isDesigner && (
                             <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded-md font-normal lowercase">salt okunur</span>
-                        )}
-                        {isDesigner && users.length === 0 && events.length === 0 && (
-                            <button 
-                                onClick={seedDatabase}
-                                className="ml-4 text-[10px] bg-green-100 text-green-700 px-2 py-1 rounded flex items-center gap-1 hover:bg-green-200"
-                                title="Veritabanı boş görünüyor. Örnek verileri yüklemek için tıkla."
-                            >
-                                <Database size={12} /> Verileri Yükle
-                            </button>
                         )}
                     </h1>
                     {isSendingEmail && (
@@ -529,6 +484,7 @@ function App() {
 
                     <div className="h-6 w-px bg-gray-300 mx-2 hidden md:block"></div>
 
+                    {/* Search Toggle - Available to everyone */}
                     <button 
                         onClick={() => setIsSearchOpen(!isSearchOpen)}
                         className={`p-2 transition-colors rounded-lg shadow-sm border ${isSearchOpen || hasActiveFilters ? 'text-violet-600 bg-violet-50 border-violet-100' : 'bg-white border-gray-100 text-gray-500 hover:text-violet-600'}`}
@@ -540,6 +496,7 @@ function App() {
                         )}
                     </button>
 
+                    {/* Admin & Notifications - Only for Designers */}
                     {isDesigner && (
                         <>
                             <button 
@@ -569,10 +526,7 @@ function App() {
                                 isOpen={isLogOpen}
                                 logs={logs}
                                 onClose={() => setIsLogOpen(false)}
-                                onClear={() => {
-                                    // Clear logs from firestore
-                                    logs.forEach(l => deleteDoc(doc(db, "logs", l.id)));
-                                }}
+                                onClear={() => setLogs([])}
                                 />
                             </div>
 
@@ -599,10 +553,7 @@ function App() {
                                 isOpen={isNotifOpen} 
                                 notifications={notifications}
                                 onClose={() => setIsNotifOpen(false)}
-                                onMarkAllRead={() => {
-                                    // Delete all notifications
-                                    notifications.forEach(n => deleteDoc(doc(db, "notifications", n.id)));
-                                }}
+                                onMarkAllRead={() => setNotifications([])}
                                 />
                             </div>
 
@@ -713,6 +664,7 @@ function App() {
                   ${!isDesigner ? 'cursor-default' : 'cursor-pointer'}
                 `}
               >
+                {/* Date Number & Holiday Label */}
                 <div className="flex justify-between items-start mb-2">
                    {isHoliday && isCurrentMonth ? (
                      <span className="text-[10px] font-bold text-red-600 bg-red-100 px-1.5 py-0.5 rounded leading-tight max-w-[65%] line-clamp-2">
@@ -731,6 +683,7 @@ function App() {
                   </span>
                 </div>
 
+                {/* Events List */}
                 <div className="flex-1 overflow-y-auto event-scroll">
                   {dayEvents.map(event => (
                     <EventBadge 
@@ -742,6 +695,7 @@ function App() {
                   ))}
                 </div>
 
+                {/* Hover Add Indicator (Only for Designers) */}
                 {isDesigner && (
                     <>
                         <div className="absolute inset-0 bg-violet-50/0 group-hover:bg-violet-50/30 rounded-2xl pointer-events-none transition-colors" />
